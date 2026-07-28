@@ -637,10 +637,10 @@
     <h1 class="title">DIETA DE<br>RECOMPOSIÇÃO</h1>
     <p class="hero-sub">Perda de gordura + manutenção/ganho de massa muscular, ajustada para uso com Mounjaro. Marque os itens em falta e a lista de compras da semana é montada sozinha lá embaixo.</p>
     <div class="stat-strip">
-      <div class="stat"><span class="n">92 kg</span><span class="l">peso atual</span></div>
-      <div class="stat"><span class="n">~29%</span><span class="l">gordura corporal</span></div>
-      <div class="stat"><span class="n">~175 g</span><span class="l">proteína / dia</span></div>
-      <div class="stat"><span class="n">~1900 kcal</span><span class="l">meta diária</span></div>
+      <div class="stat"><span class="n" id="heroWeight">92 kg</span><span class="l">peso atual</span></div>
+      <div class="stat"><span class="n" id="heroFat">~29%</span><span class="l">gordura corporal</span></div>
+      <div class="stat"><span class="n" id="heroProtein">~175 g</span><span class="l">proteína / dia</span></div>
+      <div class="stat"><span class="n" id="heroKcal">~1900 kcal</span><span class="l">meta diária</span></div>
     </div>
   </div>
 </header>
@@ -649,6 +649,7 @@
   <p class="notice">⚠️ Não sou nutricionista licenciado. Estes valores são estimativas com base em tabelas nutricionais padrão (podem variar por marca/preparo). Idealmente valide com um profissional que acompanhe seus exames, principalmente por causa do Mounjaro — apetite reduzido pede atenção redobrada a proteína, fibra e hidratação.</p>
 
   <nav class="meal-nav">
+    <a href="#recalc">Recalcular</a>
     <a href="#cafe">Café da manhã</a>
     <a href="#almoco">Almoço</a>
     <a href="#lanche">Lanche</a>
@@ -660,6 +661,28 @@
     <a href="#shopping">Lista de compras</a>
     <a href="#total">Total do dia</a>
   </nav>
+
+  <!-- RECALCULAR PLANO -->
+  <section class="calc" id="recalc">
+    <div class="calc-head">
+      <h2>Recalcular meu plano</h2>
+    </div>
+    <p class="calc-sub">Informe seu peso e percentual de gordura atuais. As metas de calorias e proteína são recalculadas com fórmulas reais (Katch-McArdle para gasto energético + proteína por kg de massa magra) — nada disso é "inventado" por IA. Todos os itens marcados como proteína ou carboidrato escalam proporcionalmente; itens fixos (feijão, azeite, salada, leite, extras) mantêm a porção de referência.</p>
+    <div class="calc-box">
+      <div class="calc-field">
+        <label for="pesoInput">Peso atual (kg)</label>
+        <input type="number" id="pesoInput" step="0.1" placeholder="ex: 92">
+      </div>
+      <div class="calc-field">
+        <label for="gorduraInput">Percentual de gordura corporal (%)</label>
+        <input type="number" id="gorduraInput" step="0.1" placeholder="ex: 29">
+      </div>
+      <button class="calc-btn" onclick="recalcularPlano()">Recalcular plano</button>
+      <p class="ai-status" id="recalcStatus"></p>
+      <div class="calc-note" id="recalcSummary" style="display:none;"></div>
+      <div class="calc-note" id="recalcAiSummary" style="display:none;"></div>
+    </div>
+  </section>
 
   <div id="meals-container"></div>
 
@@ -747,14 +770,14 @@
 
   <!-- TOTAL DO DIA -->
   <div class="day-total" id="total">
-    <div class="day-total-head">Total do dia (opções base)</div>
-    <div class="day-total-grid">
+    <div class="day-total-head">Total do dia (plano atual)</div>
+    <div class="day-total-grid" id="dayTotalGrid">
       <div class="cell"><span class="val">~1734</span><span class="lab">kcal</span></div>
       <div class="cell"><span class="val">178g</span><span class="lab">proteína</span></div>
       <div class="cell"><span class="val">126g</span><span class="lab">carboidrato</span></div>
       <div class="cell"><span class="val">48g</span><span class="lab">gordura</span></div>
     </div>
-    <p class="day-note">Esse total com as opções base fica um pouco abaixo dos ~1900–2100 kcal de meta — de propósito, já que com Mounjaro o apetite costuma ser menor. Se estiver com fome de sobra ou for dia de treino pesado, use os itens de "Extras" acima ou troque por substituições mais calóricas (ex: lombo suíno no lugar do frango). Se depois de 2–3 semanas o peso não estiver caindo, reduza mais; se cair rápido demais (mais de ~1% do peso por semana), aumente as porções de carboidrato.</p>
+    <p class="day-note" id="dayNote">Esse total com as opções base fica um pouco abaixo dos ~1900–2100 kcal de meta — de propósito, já que com Mounjaro o apetite costuma ser menor. Se estiver com fome de sobra ou for dia de treino pesado, use os itens de "Extras" acima ou troque por substituições mais calóricas (ex: lombo suíno no lugar do frango). Se depois de 2–3 semanas o peso não estiver caindo, reduza mais; se cair rápido demais (mais de ~1% do peso por semana), aumente as porções de carboidrato.</p>
   </div>
 
   <footer>
@@ -782,159 +805,188 @@ var firebaseConfig = {
 var FIREBASE_ENABLED = firebaseConfig.apiKey !== "SUA_API_KEY_AQUI";
 var db = null;
 var stockDocRef = null;
-var configDocRef = null;
+var configDocRef = null;  // dieta/config — só leitura pela página (guarda a chave da Groq)
+var perfilDocRef = null;  // dieta/perfil — leitura E escrita pela página (peso / % gordura)
 
 if(FIREBASE_ENABLED){
   var fbApp = initializeApp(firebaseConfig);
   db = getFirestore(fbApp);
   stockDocRef = doc(db, "dieta", "estoqueSemanal");
   configDocRef = doc(db, "dieta", "config");
+  perfilDocRef = doc(db, "dieta", "perfil");
 }
 
 /* ============ DADOS DA DIETA ============ */
+// Cada item tem um "role": 'protein' (escala com a meta de proteína), 'carb' (escala com a
+// meta de carboidrato) ou 'fixed' (não escala — feijão, azeite, salada, leite, extras).
+// kcal/p/c/f abaixo são os valores ORIGINAIS (no peso/gordura de referência); na hora de
+// renderizar, cada item é multiplicado pela razão (nova meta / meta original) do seu role.
 var MEALS = [
   { id:"cafe", title:"Café da manhã", time:"~07:00",
-    target:"~360 kcal · 23g proteína · 22g carbo · 18g gordura",
-    totalLabel:"359 kcal · P23,5 · C22,3 · G17,8",
     items:[
-      { name:"Ovos inteiros", amount:"150 g (3 unid.)", macros:"234 kcal · P19 · C1,8 · G16",
+      { name:"Ovos inteiros", role:"protein",
+        components:[{label:"Ovos", grams:150, unit:"g", gramsPerUnit:50, unitLabel:"unid."}],
+        kcal:234, p:19, c:1.8, f:16,
         shopping:[{name:"Ovos", qty:3, unit:"un"}],
         subs:[
-          { name:"Iogurte natural integral + whey (meia dose)", amount:"250 g + 15 g", macros:"~228 kcal · P19 · C13,5 · G8,6",
+          { name:"Iogurte natural integral + whey (meia dose)",
+            components:[{label:"Iogurte natural integral", grams:250, unit:"g"},{label:"Whey protein", grams:15, unit:"g"}],
+            kcal:228, p:19, c:13.5, f:8.6,
             shopping:[{name:"Iogurte natural integral", qty:250, unit:"g"},{name:"Whey protein", qty:15, unit:"g"}] },
-          { name:"Queijo cottage", amount:"250 g", macros:"~245 kcal · P27,5 · C8,5 · G10,8",
+          { name:"Queijo cottage",
+            components:[{label:"Queijo cottage", grams:250, unit:"g"}],
+            kcal:245, p:27.5, c:8.5, f:10.8,
             shopping:[{name:"Queijo cottage", qty:250, unit:"g"}] },
-          { name:"Claras de ovo + 1 ovo inteiro", amount:"250 g + 50 g", macros:"~208 kcal · P33,8 · C0,3 · G5,5",
+          { name:"Claras de ovo + 1 ovo inteiro",
+            components:[{label:"Claras de ovo (caixinha)", grams:250, unit:"g"},{label:"Ovos", grams:50, unit:"g", gramsPerUnit:50, unitLabel:"unid."}],
+            kcal:208, p:33.8, c:0.3, f:5.5,
             shopping:[{name:"Claras de ovo (caixinha)", qty:250, unit:"g"},{name:"Ovos", qty:1, unit:"un"}] }
         ]
       },
-      { name:"Pão integral", amount:"50 g (2 fatias)", macros:"125 kcal · P4,5 · C20,5 · G1,8",
+      { name:"Pão integral", role:"carb",
+        components:[{label:"Pão integral", grams:50, unit:"g"}],
+        kcal:125, p:4.5, c:20.5, f:1.8,
         shopping:[{name:"Pão integral", qty:50, unit:"g"}],
         subs:[
-          { name:"Aveia em flocos", amount:"40 g", macros:"~156 kcal · P6,8 · C26,4 · G2,8",
-            shopping:[{name:"Aveia em flocos", qty:40, unit:"g"}] },
-          { name:"Banana", amount:"120 g (1 unid. média)", macros:"~107 kcal · P1,3 · C27,6 · G0,4",
-            shopping:[{name:"Banana", qty:1, unit:"un"}] },
-          { name:"Tapioca (goma hidratada)", amount:"40 g", macros:"~96 kcal · P0,6 · C23,2 · G0,1",
-            shopping:[{name:"Goma de tapioca", qty:40, unit:"g"}] }
+          { name:"Aveia em flocos", components:[{label:"Aveia em flocos", grams:40, unit:"g"}],
+            kcal:156, p:6.8, c:26.4, f:2.8, shopping:[{name:"Aveia em flocos", qty:40, unit:"g"}] },
+          { name:"Banana", components:[{label:"Banana", grams:120, unit:"g", gramsPerUnit:120, unitLabel:"unid. média"}],
+            kcal:107, p:1.3, c:27.6, f:0.4, shopping:[{name:"Banana", qty:1, unit:"un"}] },
+          { name:"Tapioca (goma hidratada)", components:[{label:"Goma de tapioca", grams:40, unit:"g"}],
+            kcal:96, p:0.6, c:23.2, f:0.1, shopping:[{name:"Goma de tapioca", qty:40, unit:"g"}] }
         ]
       }
     ]
   },
   { id:"almoco", title:"Almoço", time:"~12:30",
-    target:"~615 kcal · 58g proteína · 57g carbo · 12g gordura",
-    totalLabel:"614 kcal · P58,2 · C57 · G11,7",
     items:[
-      { name:"Frango grelhado (peito)", amount:"160 g", macros:"264 kcal · P49,6 · C0 · G5,8",
+      { name:"Frango grelhado (peito)", role:"protein",
+        components:[{label:"Peito de frango", grams:160, unit:"g"}],
+        kcal:264, p:49.6, c:0, f:5.8,
         shopping:[{name:"Peito de frango", qty:160, unit:"g"}],
         subs:[
-          { name:"Patinho moído magro (cozido)", amount:"180 g", macros:"~310 kcal · P48 · C0 · G13",
-            shopping:[{name:"Patinho moído", qty:180, unit:"g"}] },
-          { name:"Tilápia grelhada", amount:"190 g", macros:"~243 kcal · P49,4 · C0 · G5,1",
-            shopping:[{name:"Tilápia", qty:190, unit:"g"}] },
-          { name:"Atum enlatado (água), escorrido", amount:"190 g (~1,5 lata)", macros:"~220 kcal · P49,4 · C0 · G1,5",
-            shopping:[{name:"Atum enlatado (água)", qty:1.5, unit:"lata"}] },
-          { name:"Lombo suíno grelhado", amount:"180 g", macros:"~360 kcal · P50,4 · C0 · G16,2",
-            shopping:[{name:"Lombo suíno", qty:180, unit:"g"}] }
+          { name:"Patinho moído magro (cozido)", components:[{label:"Patinho moído", grams:180, unit:"g"}],
+            kcal:310, p:48, c:0, f:13, shopping:[{name:"Patinho moído", qty:180, unit:"g"}] },
+          { name:"Tilápia grelhada", components:[{label:"Tilápia", grams:190, unit:"g"}],
+            kcal:243, p:49.4, c:0, f:5.1, shopping:[{name:"Tilápia", qty:190, unit:"g"}] },
+          { name:"Atum enlatado (água), escorrido", components:[{label:"Atum enlatado (água)", grams:190, unit:"g", gramsPerUnit:127, unitLabel:"lata(s)"}],
+            kcal:220, p:49.4, c:0, f:1.5, shopping:[{name:"Atum enlatado (água)", qty:1.5, unit:"lata"}] },
+          { name:"Lombo suíno grelhado", components:[{label:"Lombo suíno", grams:180, unit:"g"}],
+            kcal:360, p:50.4, c:0, f:16.2, shopping:[{name:"Lombo suíno", qty:180, unit:"g"}] }
         ]
       },
-      { name:"Arroz branco cozido", amount:"160 g (~4 colheres de servir)", macros:"208 kcal · P4,3 · C44,8 · G0,5",
+      { name:"Arroz branco cozido", role:"carb",
+        components:[{label:"Arroz branco", grams:160, unit:"g"}],
+        kcal:208, p:4.3, c:44.8, f:0.5,
         shopping:[{name:"Arroz branco (cru)", qty:65, unit:"g"}],
         subs:[
-          { name:"Batata doce cozida", amount:"220 g", macros:"~189 kcal · P3,5 · C44 · G0,2",
-            shopping:[{name:"Batata doce", qty:220, unit:"g"}] },
-          { name:"Macarrão cozido", amount:"145 g", macros:"~190 kcal · P7,3 · C45 · G0,7",
-            shopping:[{name:"Macarrão (cru)", qty:60, unit:"g"}] },
-          { name:"Arroz integral cozido", amount:"180 g", macros:"~223 kcal · P4,7 · C46,4 · G1,3",
-            shopping:[{name:"Arroz integral (cru)", qty:75, unit:"g"}] },
-          { name:"Mandioca cozida", amount:"130 g", macros:"~162 kcal · P0,8 · C44,2 · G0,3",
-            shopping:[{name:"Mandioca (crua)", qty:130, unit:"g"}] }
+          { name:"Batata doce cozida", components:[{label:"Batata doce", grams:220, unit:"g"}],
+            kcal:189, p:3.5, c:44, f:0.2, shopping:[{name:"Batata doce", qty:220, unit:"g"}] },
+          { name:"Macarrão cozido", components:[{label:"Macarrão", grams:145, unit:"g"}],
+            kcal:190, p:7.3, c:45, f:0.7, shopping:[{name:"Macarrão (cru)", qty:60, unit:"g"}] },
+          { name:"Arroz integral cozido", components:[{label:"Arroz integral", grams:180, unit:"g"}],
+            kcal:223, p:4.7, c:46.4, f:1.3, shopping:[{name:"Arroz integral (cru)", qty:75, unit:"g"}] },
+          { name:"Mandioca cozida", components:[{label:"Mandioca", grams:130, unit:"g"}],
+            kcal:162, p:0.8, c:44.2, f:0.3, shopping:[{name:"Mandioca (crua)", qty:130, unit:"g"}] }
         ]
       },
-      { name:"Feijão cozido", amount:"90 g (~1 concha)", macros:"68 kcal · P4,3 · C12,2 · G0,5",
+      { name:"Feijão cozido", role:"fixed",
+        components:[{label:"Feijão", grams:90, unit:"g"}],
+        kcal:68, p:4.3, c:12.2, f:0.5,
         shopping:[{name:"Feijão (cru)", qty:35, unit:"g"}],
         subs:[
-          { name:"Lentilha cozida", amount:"90 g", macros:"~105 kcal · P7,9 · C18 · G0,3",
-            shopping:[{name:"Lentilha (crua)", qty:35, unit:"g"}] },
-          { name:"Grão-de-bico cozido", amount:"90 g", macros:"~120 kcal · P7,2 · C19,4 · G1,8",
-            shopping:[{name:"Grão-de-bico (cru)", qty:35, unit:"g"}] }
+          { name:"Lentilha cozida", components:[{label:"Lentilha", grams:90, unit:"g"}],
+            kcal:105, p:7.9, c:18, f:0.3, shopping:[{name:"Lentilha (crua)", qty:35, unit:"g"}] },
+          { name:"Grão-de-bico cozido", components:[{label:"Grão-de-bico", grams:90, unit:"g"}],
+            kcal:120, p:7.2, c:19.4, f:1.8, shopping:[{name:"Grão-de-bico (cru)", qty:35, unit:"g"}] }
         ]
       },
-      { name:"Azeite de oliva", amount:"5 g (1 fio)", macros:"44 kcal · G5",
-        shopping:[{name:"Azeite de oliva", qty:5, unit:"g"}],
-        subs:[]
+      { name:"Azeite de oliva", role:"fixed",
+        components:[{label:"Azeite de oliva", grams:5, unit:"g"}],
+        kcal:44, p:0, c:0, f:5,
+        shopping:[{name:"Azeite de oliva", qty:5, unit:"g"}], subs:[]
       },
-      { name:"Salada de folhas/tomate", amount:"à vontade", macros:"~30 kcal · fibra",
-        shopping:[{name:"Alface / rúcula / tomate / pepino", qty:null, unit:"gosto"}],
-        subs:[]
+      { name:"Salada de folhas/tomate", role:"fixed",
+        components:[{label:"à vontade", grams:0, unit:"", freeform:true}],
+        kcal:30, p:0, c:3, f:0,
+        shopping:[{name:"Alface / rúcula / tomate / pepino", qty:null, unit:"gosto"}], subs:[]
       }
     ]
   },
   { id:"lanche", title:"Lanche da tarde", time:"~16:00",
-    target:"~190 kcal · 31g proteína · 13g carbo · 2g gordura",
-    totalLabel:"190 kcal · P31 · C13 · G1,7",
     items:[
-      { name:"Whey protein", amount:"30 g (1 scoop)", macros:"~120 kcal · P24 · C3 · G1,5",
+      { name:"Whey protein", role:"protein",
+        components:[{label:"Whey protein", grams:30, unit:"g"}],
+        kcal:120, p:24, c:3, f:1.5,
         shopping:[{name:"Whey protein", qty:30, unit:"g"}],
         subs:[
-          { name:"Ovos cozidos + 1 fruta pequena (maçã)", amount:"100 g + 100 g", macros:"~208 kcal · P12,9 · C24 · G10,6",
-            shopping:[{name:"Ovos", qty:2, unit:"un"},{name:"Maçã", qty:1, unit:"un"}] },
-          { name:"Iogurte natural integral + pasta de amendoim", amount:"300 g + 15 g", macros:"~271 kcal · P14,3 · C17,1 · G17,4",
-            shopping:[{name:"Iogurte natural integral", qty:300, unit:"g"},{name:"Pasta de amendoim", qty:15, unit:"g"}] },
-          { name:"Queijo cottage + 1 fruta (mamão)", amount:"200 g + 150 g", macros:"~255 kcal · P22,9 · C21,8 · G8,6",
-            shopping:[{name:"Queijo cottage", qty:200, unit:"g"},{name:"Mamão", qty:150, unit:"g"}] }
+          { name:"Ovos cozidos + 1 fruta pequena (maçã)",
+            components:[{label:"Ovos", grams:100, unit:"g", gramsPerUnit:50, unitLabel:"unid."},{label:"Maçã", grams:100, unit:"g", gramsPerUnit:100, unitLabel:"unid."}],
+            kcal:208, p:12.9, c:24, f:10.6, shopping:[{name:"Ovos", qty:2, unit:"un"},{name:"Maçã", qty:1, unit:"un"}] },
+          { name:"Iogurte natural integral + pasta de amendoim",
+            components:[{label:"Iogurte natural integral", grams:300, unit:"g"},{label:"Pasta de amendoim", grams:15, unit:"g"}],
+            kcal:271, p:14.3, c:17.1, f:17.4, shopping:[{name:"Iogurte natural integral", qty:300, unit:"g"},{name:"Pasta de amendoim", qty:15, unit:"g"}] },
+          { name:"Queijo cottage + 1 fruta (mamão)",
+            components:[{label:"Queijo cottage", grams:200, unit:"g"},{label:"Mamão", grams:150, unit:"g"}],
+            kcal:255, p:22.9, c:21.8, f:8.6, shopping:[{name:"Queijo cottage", qty:200, unit:"g"},{name:"Mamão", qty:150, unit:"g"}] }
         ]
       },
-      { name:"Leite desnatado", amount:"200 ml", macros:"70 kcal · P7 · C10 · G0,2",
+      { name:"Leite desnatado", role:"fixed",
+        components:[{label:"Leite desnatado", grams:200, unit:"ml"}],
+        kcal:70, p:7, c:10, f:0.2,
         shopping:[{name:"Leite desnatado", qty:200, unit:"ml"}],
         subs:[
-          { name:"Água (bater whey só com água — menos carbo, mesma proteína)", amount:"200 ml", macros:"—",
-            shopping:[] }
+          { name:"Água (bater whey só com água — menos carbo, mesma proteína)",
+            components:[{label:"Água", grams:200, unit:"ml"}], kcal:0, p:0, c:0, f:0, shopping:[] }
         ]
       }
     ]
   },
   { id:"jantar", title:"Jantar", time:"~19:30",
-    target:"~425 kcal · 49g proteína · 29g carbo · 11g gordura",
-    totalLabel:"424 kcal · P49,4 · C29 · G10,5",
     items:[
-      { name:"Frango grelhado (peito)", amount:"150 g", macros:"247 kcal · P46,5 · C0 · G5,4",
+      { name:"Frango grelhado (peito)", role:"protein",
+        components:[{label:"Peito de frango", grams:150, unit:"g"}],
+        kcal:247, p:46.5, c:0, f:5.4,
         shopping:[{name:"Peito de frango", qty:150, unit:"g"}],
         subs:[
-          { name:"Patinho moído magro (cozido)", amount:"170 g", macros:"~293 kcal · P45,4 · C0 · G12,2",
-            shopping:[{name:"Patinho moído", qty:170, unit:"g"}] },
-          { name:"Tilápia grelhada", amount:"175 g", macros:"~224 kcal · P45,5 · C0 · G4,7",
-            shopping:[{name:"Tilápia", qty:175, unit:"g"}] },
-          { name:"Ovos inteiros (opção vegetariana — considere somar 1 scoop de whey)", amount:"200 g (4 unid.)", macros:"~312 kcal · P25 · C2,4 · G21,3",
-            shopping:[{name:"Ovos", qty:4, unit:"un"}] }
+          { name:"Patinho moído magro (cozido)", components:[{label:"Patinho moído", grams:170, unit:"g"}],
+            kcal:293, p:45.4, c:0, f:12.2, shopping:[{name:"Patinho moído", qty:170, unit:"g"}] },
+          { name:"Tilápia grelhada", components:[{label:"Tilápia", grams:175, unit:"g"}],
+            kcal:224, p:45.5, c:0, f:4.7, shopping:[{name:"Tilápia", qty:175, unit:"g"}] },
+          { name:"Ovos inteiros (opção vegetariana — considere somar 1 scoop de whey)",
+            components:[{label:"Ovos", grams:200, unit:"g", gramsPerUnit:50, unitLabel:"unid."}],
+            kcal:312, p:25, c:2.4, f:21.3, shopping:[{name:"Ovos", qty:4, unit:"un"}] }
         ]
       },
-      { name:"Batata doce cozida", amount:"120 g", macros:"103 kcal · P1,9 · C24 · G0,1",
+      { name:"Batata doce cozida", role:"carb",
+        components:[{label:"Batata doce", grams:120, unit:"g"}],
+        kcal:103, p:1.9, c:24, f:0.1,
         shopping:[{name:"Batata doce", qty:120, unit:"g"}],
         subs:[
-          { name:"Arroz branco cozido", amount:"90 g", macros:"~117 kcal · P2,4 · C25,2 · G0,3",
-            shopping:[{name:"Arroz branco (cru)", qty:37, unit:"g"}] },
-          { name:"Mandioca cozida", amount:"70 g", macros:"~87 kcal · P0,4 · C23,8 · G0,2",
-            shopping:[{name:"Mandioca (crua)", qty:70, unit:"g"}] }
+          { name:"Arroz branco cozido", components:[{label:"Arroz branco", grams:90, unit:"g"}],
+            kcal:117, p:2.4, c:25.2, f:0.3, shopping:[{name:"Arroz branco (cru)", qty:37, unit:"g"}] },
+          { name:"Mandioca cozida", components:[{label:"Mandioca", grams:70, unit:"g"}],
+            kcal:87, p:0.4, c:23.8, f:0.2, shopping:[{name:"Mandioca (crua)", qty:70, unit:"g"}] }
         ]
       },
-      { name:"Vegetais refogados (brócolis/abobrinha) + azeite", amount:"100 g + 5 g", macros:"~74 kcal · P1 · C5 · G5",
-        shopping:[{name:"Brócolis / abobrinha", qty:100, unit:"g"},{name:"Azeite de oliva", qty:5, unit:"g"}],
-        subs:[]
+      { name:"Vegetais refogados (brócolis/abobrinha) + azeite", role:"fixed",
+        components:[{label:"Brócolis / abobrinha", grams:100, unit:"g"},{label:"Azeite de oliva", grams:5, unit:"g"}],
+        kcal:74, p:1, c:5, f:5,
+        shopping:[{name:"Brócolis / abobrinha", qty:100, unit:"g"},{name:"Azeite de oliva", qty:5, unit:"g"}], subs:[]
       }
     ]
   },
   { id:"ceia", title:"Ceia (opcional)", time:"~22:00",
-    target:"~150 kcal · 16g proteína · 5g carbo · 6g gordura",
-    totalLabel:"147 kcal · P16,5 · C5,1 · G6,5",
     items:[
-      { name:"Queijo cottage", amount:"150 g", macros:"147 kcal · P16,5 · C5,1 · G6,5",
+      { name:"Queijo cottage", role:"protein",
+        components:[{label:"Queijo cottage", grams:150, unit:"g"}],
+        kcal:147, p:16.5, c:5.1, f:6.5,
         shopping:[{name:"Queijo cottage", qty:150, unit:"g"}],
         subs:[
-          { name:"Iogurte natural integral", amount:"200 g", macros:"~122 kcal · P7 · C9,4 · G6,6",
-            shopping:[{name:"Iogurte natural integral", qty:200, unit:"g"}] },
-          { name:"Caseína ou whey em água", amount:"20 g", macros:"~80 kcal · P16 · C2 · G1",
-            shopping:[{name:"Caseína ou whey protein", qty:20, unit:"g"}] }
+          { name:"Iogurte natural integral", components:[{label:"Iogurte natural integral", grams:200, unit:"g"}],
+            kcal:122, p:7, c:9.4, f:6.6, shopping:[{name:"Iogurte natural integral", qty:200, unit:"g"}] },
+          { name:"Caseína ou whey em água", components:[{label:"Caseína ou whey protein", grams:20, unit:"g"}],
+            kcal:80, p:16, c:2, f:1, shopping:[{name:"Caseína ou whey protein", qty:20, unit:"g"}] }
         ]
       }
     ]
@@ -942,13 +994,71 @@ var MEALS = [
 ];
 
 var EXTRAS = [
-  { name:"Castanhas (mix/castanha-do-pará)", amount:"15 g", macros:"~95 kcal · P2 · G8 — boa gordura, use se as calorias do dia estiverem baixas",
+  { name:"Castanhas (mix/castanha-do-pará)", role:"fixed",
+    components:[{label:"Castanhas (mix)", grams:15, unit:"g"}], kcal:95, p:2, c:2, f:8,
+    note:"boa gordura, use se as calorias do dia estiverem baixas",
     shopping:[{name:"Castanhas (mix)", qty:15, unit:"g"}] },
-  { name:"Pasta de amendoim", amount:"15 g", macros:"~88 kcal · P3,7 · C20 · G7,5 — pode ir no café da manhã ou lanche",
+  { name:"Pasta de amendoim", role:"fixed",
+    components:[{label:"Pasta de amendoim", grams:15, unit:"g"}], kcal:88, p:3.7, c:20, f:7.5,
+    note:"pode ir no café da manhã ou lanche",
     shopping:[{name:"Pasta de amendoim", qty:15, unit:"g"}] },
-  { name:"Banana + pasta de amendoim (pré-treino)", amount:"100 g + 10 g", macros:"~148 kcal — energia rápida antes da musculação",
+  { name:"Banana + pasta de amendoim (pré-treino)", role:"fixed",
+    components:[{label:"Banana", grams:100, unit:"g"},{label:"Pasta de amendoim", grams:10, unit:"g"}], kcal:148, p:1.9, c:24.8, f:5.9,
+    note:"energia rápida antes da musculação",
     shopping:[{name:"Banana", qty:1, unit:"un"},{name:"Pasta de amendoim", qty:10, unit:"g"}] }
 ];
+
+/* ============ MOTOR DE RECÁLCULO (peso / % gordura -> razões de escala) ============ */
+// Somas originais (baseline 92kg / 29% gordura) dos itens "protein"/"carb" — usadas como
+// denominador pra calcular a razão de escala quando uma nova meta é definida.
+var BASELINE_PROTEIN_SUM = 155.6; // ovos19 + frango almoço49.6 + whey24 + frango jantar46.5 + cottage16.5
+var BASELINE_CARB_SUM = 89.3;     // pão20.5 + arroz almoço44.8 + batata doce jantar24
+var scaleRatioP = 1;
+var scaleRatioC = 1;
+var currentTargets = null; // { lbm, kcalTarget, proteinTarget, carbTarget, fatTarget, pesoKg, gorduraPct }
+
+function fmtG(n){
+  var s = n.toFixed(1);
+  if(s.slice(-2) === ",0" || s.slice(-2) === ".0") s = s.slice(0, -2);
+  return s.replace(".", ",");
+}
+function round5(n){ return Math.max(0, Math.round(n/5)*5); }
+
+function ratioForRole(role){
+  if(role === "protein") return scaleRatioP;
+  if(role === "carb") return scaleRatioC;
+  return 1;
+}
+
+function formatComponents(components, ratio){
+  return components.map(function(c){
+    if(c.freeform) return "à vontade";
+    var g = c.grams * ratio;
+    var gr = round5(g);
+    var base = gr + " " + (c.unit || "g");
+    if(c.gramsPerUnit){
+      var units = Math.round((gr / c.gramsPerUnit) * 2) / 2;
+      base += " (~" + units + " " + (c.unitLabel || "unid.") + ")";
+    }
+    return base;
+  }).join(" + ");
+}
+
+function itemMacrosScaled(item, ratio){
+  return {
+    kcal: Math.round(item.kcal * ratio),
+    p: fmtG(item.p * ratio),
+    c: fmtG(item.c * ratio),
+    f: fmtG(item.f * ratio)
+  };
+}
+
+function shoppingScaled(shoppingArr, ratio){
+  return (shoppingArr || []).map(function(s){
+    if(s.unit === "gosto" || s.qty === null) return s;
+    return { name:s.name, unit:s.unit, qty: s.qty * ratio };
+  });
+}
 
 /* ============ RENDERIZAÇÃO ============ */
 var rowCounter = 0;
@@ -959,58 +1069,106 @@ function stockButtonHtml(rowId, shoppingArr){
 }
 
 function renderMeals(){
+  rowCounter = 0;
+  ROW_DATA = {};
   var container = document.getElementById("meals-container");
+  container.innerHTML = "";
+
   MEALS.forEach(function(meal){
     var section = document.createElement("section");
     section.className = "meal";
     section.id = meal.id;
 
+    var mealKcal = 0, mealP = 0, mealC = 0, mealF = 0;
+
     var html = '';
     html += '<div class="meal-head"><h2>'+meal.title+'</h2><span class="time">'+meal.time+'</span></div>';
-    html += '<p class="meal-target">alvo da refeição · '+meal.target+'</p>';
-    html += '<div class="label-card">';
 
+    var itemsHtml = '';
     meal.items.forEach(function(item){
+      var ratio = ratioForRole(item.role);
+      var m = itemMacrosScaled(item, ratio);
+      mealKcal += item.kcal * ratio;
+      mealP += item.p * ratio;
+      mealC += item.c * ratio;
+      mealF += item.f * ratio;
+
+      var amountStr = formatComponents(item.components, ratio);
+      var macroStr = m.kcal + " kcal · P" + m.p + " · C" + m.c + " · G" + m.f;
       var rowId = "r"+(rowCounter++);
-      html += '<div class="food-row">';
-      html += '<div class="food-main">';
-      html += '<div class="food-click" onclick="toggleSub(this)"><span class="toggle-icon">'+(item.subs && item.subs.length ? "+" : "")+'</span><span class="food-name">'+item.name+'</span><span class="food-grams">'+item.amount+'</span></div>';
-      html += '<div class="food-right"><span class="food-macros">'+item.macros+'</span>'+stockButtonHtml(rowId, item.shopping)+'</div>';
-      html += '</div>';
+
+      itemsHtml += '<div class="food-row">';
+      itemsHtml += '<div class="food-main">';
+      itemsHtml += '<div class="food-click" onclick="toggleSub(this)"><span class="toggle-icon">'+(item.subs && item.subs.length ? "+" : "")+'</span><span class="food-name">'+item.name+'</span><span class="food-grams">'+amountStr+'</span></div>';
+      itemsHtml += '<div class="food-right"><span class="food-macros">'+macroStr+'</span>'+stockButtonHtml(rowId, shoppingScaled(item.shopping, ratio))+'</div>';
+      itemsHtml += '</div>';
 
       if(item.subs && item.subs.length){
-        html += '<div class="subs"><p class="subs-label">Substituições equivalentes</p>';
+        itemsHtml += '<div class="subs"><p class="subs-label">Substituições equivalentes</p>';
         item.subs.forEach(function(sub){
+          var sm = itemMacrosScaled(sub, ratio);
+          var subAmountStr = formatComponents(sub.components, ratio);
           var subRowId = "r"+(rowCounter++);
-          html += '<div class="sub-item">';
-          html += '<div class="sub-item-left"><span class="sname">'+sub.name+'</span><span class="smacros">'+sub.amount+' · '+sub.macros+'</span></div>';
-          html += '<div class="sub-item-right">'+stockButtonHtml(subRowId, sub.shopping)+'</div>';
-          html += '</div>';
-          registerRow(subRowId, sub.shopping);
+          itemsHtml += '<div class="sub-item">';
+          itemsHtml += '<div class="sub-item-left"><span class="sname">'+sub.name+'</span><span class="smacros">'+subAmountStr+' · '+sm.kcal+' kcal · P'+sm.p+' · C'+sm.c+' · G'+sm.f+'</span></div>';
+          itemsHtml += '<div class="sub-item-right">'+stockButtonHtml(subRowId, shoppingScaled(sub.shopping, ratio))+'</div>';
+          itemsHtml += '</div>';
+          registerRow(subRowId, shoppingScaled(sub.shopping, ratio));
         });
-        html += '</div>';
+        itemsHtml += '</div>';
       }
-      html += '</div>';
-      registerRow(rowId, item.shopping);
+      itemsHtml += '</div>';
+      registerRow(rowId, shoppingScaled(item.shopping, ratio));
     });
 
-    html += '</div>';
-    html += '<div class="meal-total"><span>Total da refeição (base)</span><strong>'+meal.totalLabel+'</strong></div>';
+    html += '<p class="meal-target">alvo atual da refeição · ~' + Math.round(mealKcal) + ' kcal · ' + fmtG(mealP) + 'g proteína · ' + fmtG(mealC) + 'g carbo · ' + fmtG(mealF) + 'g gordura</p>';
+    html += '<div class="label-card">' + itemsHtml + '</div>';
+    html += '<div class="meal-total"><span>Total da refeição (atual)</span><strong>' + Math.round(mealKcal) + ' kcal · P' + fmtG(mealP) + ' · C' + fmtG(mealC) + ' · G' + fmtG(mealF) + '</strong></div>';
 
     section.innerHTML = html;
     container.appendChild(section);
   });
+
+  updateDayTotal();
 }
 
 function renderExtras(){
   var container = document.getElementById("extras-container");
   var html = '';
   EXTRAS.forEach(function(item){
+    var ratio = 1; // extras não escalam
+    var m = itemMacrosScaled(item, ratio);
+    var amountStr = formatComponents(item.components, ratio);
     var rowId = "r"+(rowCounter++);
-    html += '<div class="extras-item"><div><strong>'+item.name+'</strong> — '+item.amount+' ('+item.macros+')</div>'+stockButtonHtml(rowId, item.shopping)+'</div>';
+    html += '<div class="extras-item"><div><strong>'+item.name+'</strong> — '+amountStr+' (~'+m.kcal+' kcal · P'+m.p+' · C'+m.c+' · G'+m.f+' — '+item.note+')</div>'+stockButtonHtml(rowId, item.shopping)+'</div>';
     registerRow(rowId, item.shopping);
   });
   container.innerHTML = html;
+}
+
+function computeDayTotals(){
+  var totalKcal=0, totalP=0, totalC=0, totalF=0;
+  MEALS.forEach(function(meal){
+    meal.items.forEach(function(item){
+      var ratio = ratioForRole(item.role);
+      totalKcal += item.kcal*ratio;
+      totalP += item.p*ratio;
+      totalC += item.c*ratio;
+      totalF += item.f*ratio;
+    });
+  });
+  return { kcal: Math.round(totalKcal), p: fmtG(totalP), c: fmtG(totalC), f: fmtG(totalF) };
+}
+
+function updateDayTotal(){
+  var t = computeDayTotals();
+  var grid = document.getElementById("dayTotalGrid");
+  if(!grid) return;
+  grid.innerHTML =
+    '<div class="cell"><span class="val">~'+t.kcal+'</span><span class="lab">kcal</span></div>' +
+    '<div class="cell"><span class="val">'+t.p+'g</span><span class="lab">proteína</span></div>' +
+    '<div class="cell"><span class="val">'+t.c+'g</span><span class="lab">carboidrato</span></div>' +
+    '<div class="cell"><span class="val">'+t.f+'g</span><span class="lab">gordura</span></div>';
 }
 
 function toggleSub(el){
@@ -1073,6 +1231,121 @@ function applyRemoteState(activeRowsArray){
     }
   });
   updateShoppingList();
+}
+
+/* ============ RECÁLCULO DO PLANO (peso / % gordura) ============ */
+function calcularNovosAlvos(pesoKg, gorduraPct){
+  var lbm = pesoKg * (1 - gorduraPct / 100);
+  var bmr = 370 + 21.6 * lbm;               // Katch-McArdle (usa massa magra, não precisa de altura/sexo)
+  var tdee = bmr * 1.55;                     // fator de atividade: moderadamente ativo + treino de força 4x/semana
+  var kcalTarget = Math.round(tdee - 400);   // déficit moderado (~400 kcal) para recomposição
+  var proteinTarget = Math.round(lbm * 2.6); // g — faixa alta de evidência para preservar/ganhar músculo em déficit
+  var fatTarget = Math.round((kcalTarget * 0.25) / 9);
+  var carbKcal = kcalTarget - (proteinTarget * 4) - (fatTarget * 9);
+  var carbTarget = Math.max(0, Math.round(carbKcal / 4));
+  return { lbm:lbm, kcalTarget:kcalTarget, proteinTarget:proteinTarget, carbTarget:carbTarget, fatTarget:fatTarget, pesoKg:pesoKg, gorduraPct:gorduraPct };
+}
+
+function aplicarNovosAlvos(targets){
+  currentTargets = targets;
+  scaleRatioP = targets.proteinTarget / BASELINE_PROTEIN_SUM;
+  scaleRatioC = targets.carbTarget / BASELINE_CARB_SUM;
+
+  renderMeals();
+  renderExtras();
+  applyRemoteState(Object.keys(ACTIVE_ROWS)); // reaplica os "em falta" nos novos botões
+
+  document.getElementById("heroWeight").textContent = fmtG(targets.pesoKg) + " kg";
+  document.getElementById("heroFat").textContent = "~" + fmtG(targets.gorduraPct) + "%";
+  document.getElementById("heroProtein").textContent = "~" + targets.proteinTarget + " g";
+  document.getElementById("heroKcal").textContent = "~" + targets.kcalTarget + " kcal";
+
+  var t = computeDayTotals();
+  document.getElementById("dayNote").textContent =
+    "Recalculado para " + fmtG(targets.pesoKg) + "kg / " + fmtG(targets.gorduraPct) + "% de gordura (massa magra ≈ " + fmtG(targets.lbm) + "kg). " +
+    "Meta: ~" + targets.kcalTarget + " kcal e " + targets.proteinTarget + "g de proteína/dia. O plano atual soma ~" + t.kcal + " kcal e " + t.p + "g de proteína " +
+    "(itens fixos — feijão, azeite, salada, leite, extras — não escalam, então o total real fica um pouco diferente da meta pura da fórmula). " +
+    "Se depois de 2–3 semanas o peso não estiver caindo, recalcule com o peso atualizado.";
+
+  var summaryEl = document.getElementById("recalcSummary");
+  summaryEl.style.display = "block";
+  summaryEl.textContent =
+    "Massa magra estimada: " + fmtG(targets.lbm) + "kg. Nova meta: ~" + targets.kcalTarget + " kcal · " +
+    targets.proteinTarget + "g proteína · ~" + targets.carbTarget + "g carboidrato · ~" + targets.fatTarget + "g gordura. " +
+    "Razão de escala aplicada: proteína ×" + fmtG(scaleRatioP) + " · carboidrato ×" + fmtG(scaleRatioC) + ".";
+}
+
+async function recalcularPlano(){
+  var pesoInput = document.getElementById("pesoInput");
+  var gorduraInput = document.getElementById("gorduraInput");
+  var statusEl = document.getElementById("recalcStatus");
+  var peso = parseFloat(pesoInput.value);
+  var gordura = parseFloat(gorduraInput.value);
+
+  if(!peso || peso <= 0 || peso > 400){
+    statusEl.textContent = "Peso inválido.";
+    return;
+  }
+  if(isNaN(gordura) || gordura <= 0 || gordura >= 70){
+    statusEl.textContent = "Percentual de gordura inválido (esperado algo entre 1 e 70).";
+    return;
+  }
+
+  statusEl.textContent = "Recalculando...";
+  var targets = calcularNovosAlvos(peso, gordura);
+  aplicarNovosAlvos(targets);
+  statusEl.textContent = "Plano recalculado.";
+
+  if(FIREBASE_ENABLED){
+    try{
+      await setDoc(perfilDocRef, { pesoKg:peso, gorduraPct:gordura, updatedAt:new Date().toISOString() }, { merge:true });
+      statusEl.textContent = "Plano recalculado e salvo no banco (sincroniza entre dispositivos).";
+    } catch(err){
+      console.error("Falha ao salvar peso/gordura no Firestore:", err);
+      statusEl.textContent = "Plano recalculado (não consegui salvar no banco — verifique a regra do documento dieta/perfil).";
+    }
+  }
+
+  // resumo opcional gerado pela IA (Groq) — só texto explicativo, não influencia nenhum número acima
+  gerarResumoIA(targets);
+}
+
+async function gerarResumoIA(targets){
+  var aiSummaryEl = document.getElementById("recalcAiSummary");
+  var key = getStoredGroqKey();
+  if(!FIREBASE_ENABLED || !key){
+    aiSummaryEl.style.display = "none";
+    return;
+  }
+
+  aiSummaryEl.style.display = "block";
+  aiSummaryEl.textContent = "Gerando resumo personalizado...";
+
+  var prompt =
+    "Baseado nestes números de um plano de dieta para recomposição corporal (perda de gordura + ganho de massa muscular), " +
+    "escreva um parágrafo curto (3-4 frases), em português do Brasil, tom direto e encorajador, explicando o que mudou e uma dica prática. " +
+    "NÃO invente nenhum número novo, use só os que eu passar. Dados: peso " + targets.pesoKg + "kg, gordura corporal " + targets.gorduraPct + "%, " +
+    "massa magra estimada " + targets.lbm.toFixed(1) + "kg, nova meta " + targets.kcalTarget + " kcal/dia, " + targets.proteinTarget + "g de proteína/dia, " +
+    "treino de força 4x/semana focado em hipertrofia.";
+
+  try{
+    var response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        temperature: 0.4,
+        messages: [{ role:"user", content: prompt }]
+      })
+    });
+    if(!response.ok){ throw new Error("status " + response.status); }
+    var data = await response.json();
+    var text = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
+    aiSummaryEl.textContent = text || "Não consegui gerar o resumo agora.";
+  } catch(err){
+    console.error("Erro ao gerar resumo com Groq:", err);
+    aiSummaryEl.style.display = "none";
+  }
 }
 
 function formatQty(totalQty, unit){
@@ -1497,6 +1770,16 @@ window.addEventListener("DOMContentLoaded", function(){
       console.error("Erro ao ler config (chave Groq) do Firestore:", err);
       document.getElementById("aiBadge").textContent = "erro ao ler o banco";
     });
+    onSnapshot(perfilDocRef, function(snap){
+      var data = snap.exists() ? snap.data() : null;
+      if(data && data.pesoKg && data.gorduraPct){
+        document.getElementById("pesoInput").value = data.pesoKg;
+        document.getElementById("gorduraInput").value = data.gorduraPct;
+        aplicarNovosAlvos(calcularNovosAlvos(data.pesoKg, data.gorduraPct));
+      }
+    }, function(err){
+      console.error("Erro ao ler perfil (peso/gordura) do Firestore:", err);
+    });
   } else {
     syncEl.textContent = "\ud83d\udcbe modo local — cole seu firebaseConfig no código da página para salvar entre sessões e dispositivos";
     updateShoppingList();
@@ -1511,6 +1794,7 @@ window.limparSelecao = limparSelecao;
 window.copyShoppingList = copyShoppingList;
 window.calcularSubstituicao = calcularSubstituicao;
 window.askAI = askAI;
+window.recalcularPlano = recalcularPlano;
 </script>
 
 </body>
