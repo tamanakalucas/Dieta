@@ -476,6 +476,107 @@
   }
   .calc-error.show{display:block;}
 
+  /* IA LOCAL (WebLLM) */
+  section.ai{
+    margin-top:60px;
+    scroll-margin-top:70px;
+  }
+  .ai-head{
+    border-bottom:8px solid var(--ink);
+    padding-bottom:6px;
+  }
+  .ai-head h2{
+    font-family:'Oswald',sans-serif;
+    font-weight:700;
+    font-size:clamp(24px,3.6vw,32px);
+    text-transform:uppercase;
+    margin:0;
+  }
+  .ai-sub{
+    font-size:14px;
+    color:#3a382f;
+    margin:10px 0 20px;
+  }
+  .ai-box{
+    border:3px solid var(--ink);
+    background:var(--card);
+    padding:22px;
+  }
+  .ai-badge{
+    display:inline-block;
+    font-family:'DM Mono',monospace;
+    font-size:10.5px;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+    padding:4px 9px;
+    border:1.5px solid var(--olive);
+    color:var(--olive);
+    border-radius:2px;
+    margin-bottom:14px;
+  }
+  .ai-progress-wrap{
+    display:none;
+    margin:14px 0;
+  }
+  .ai-progress-wrap.show{display:block;}
+  .ai-progress-track{
+    width:100%;
+    height:10px;
+    background:var(--sub-bg);
+    border:1.5px solid var(--ink);
+  }
+  .ai-progress-bar{
+    height:100%;
+    width:0%;
+    background:var(--olive);
+    transition:width .2s;
+  }
+  .ai-progress-text{
+    font-family:'DM Mono',monospace;
+    font-size:11.5px;
+    color:var(--muted);
+    margin-top:6px;
+  }
+  .ai-chat-row{
+    display:flex;
+    gap:10px;
+    margin-top:6px;
+  }
+  .ai-chat-row input{
+    flex:1;
+    padding:10px 12px;
+    font-family:'Inter',sans-serif;
+    font-size:15px;
+    border:2px solid var(--ink);
+    background:var(--paper);
+    color:var(--ink);
+  }
+  .ai-chat-row input:focus{outline:none;border-color:var(--rust);}
+  .ai-chat-row button{
+    padding:10px 18px;
+    background:var(--olive);
+    color:var(--paper);
+    border:none;
+    font-family:'Oswald',sans-serif;
+    font-weight:600;
+    font-size:13px;
+    text-transform:uppercase;
+    cursor:pointer;
+  }
+  .ai-chat-row button:disabled{background:#a8a493;cursor:not-allowed;}
+  .ai-understood{
+    font-family:'DM Mono',monospace;
+    font-size:12px;
+    color:var(--olive);
+    margin-top:14px;
+  }
+  .ai-status{
+    font-family:'DM Mono',monospace;
+    font-size:12.5px;
+    color:var(--muted);
+    margin-top:10px;
+  }
+
   /* LISTA DE COMPRAS */
   section.shopping{
     margin-top:60px;
@@ -578,6 +679,7 @@
     <a href="#ceia">Ceia</a>
     <a href="#extras">Extras</a>
     <a href="#calc">Calculadora</a>
+    <a href="#ai">IA local</a>
     <a href="#shopping">Lista de compras</a>
     <a href="#total">Total do dia</a>
   </nav>
@@ -615,6 +717,40 @@
         <p class="calc-macro-line" id="calcCompareLine"></p>
         <div class="calc-note" id="calcNote"></div>
       </div>
+    </div>
+  </section>
+
+  <!-- IA LOCAL (WEBLLM) -->
+  <section class="ai" id="ai">
+    <div class="ai-head">
+      <h2>Pergunte em português livre (IA local)</h2>
+    </div>
+    <p class="ai-sub">Um modelo aberto (Llama 3.2, da Meta) roda direto no seu navegador — nada sai do seu celular/computador, sem chave, sem servidor. Na primeira vez baixa ~1 GB (melhor em Wi-Fi); depois fica salvo em cache e carrega rápido. A IA só interpreta sua pergunta — quem calcula os gramas é a mesma lógica exata da calculadora acima.</p>
+    <div class="ai-box">
+      <span class="ai-badge" id="aiBadge">não carregado</span>
+      <div id="aiUnsupported" style="display:none;font-size:14px;color:#8a3324;">
+        Seu navegador não suporta WebGPU (necessário pra IA local). No iPhone, isso pede iOS 26 ou mais recente com Safari atualizado. Use a calculadora manual acima normalmente — ela não depende disso.
+      </div>
+      <div id="aiLoadWrap">
+        <button class="calc-btn" id="aiLoadBtn" onclick="loadAI()">Carregar IA local (~1 GB na 1ª vez)</button>
+      </div>
+      <div class="ai-progress-wrap" id="aiProgressWrap">
+        <div class="ai-progress-track"><div class="ai-progress-bar" id="aiProgressBar"></div></div>
+        <p class="ai-progress-text" id="aiProgressText">Preparando...</p>
+      </div>
+      <div class="ai-chat-row" id="aiChatRow" style="display:none;">
+        <input type="text" id="aiInput" placeholder="ex: vou comer arroz japonês no almoço, quanto posso comer?" onkeydown="if(event.key==='Enter'){askAI();}">
+        <button onclick="askAI()" id="aiAskBtn">Perguntar</button>
+      </div>
+      <p class="ai-status" id="aiStatus"></p>
+      <div class="calc-result" id="aiResult">
+        <p class="headline" id="aiHeadline"></p>
+        <p class="calc-macro-line" id="aiMacroLine"></p>
+        <p class="calc-macro-line" id="aiCompareLine"></p>
+        <p class="ai-understood" id="aiUnderstood"></p>
+        <div class="calc-note" id="aiNote"></div>
+      </div>
+      <div class="calc-error" id="aiError"></div>
     </div>
   </section>
 
@@ -1137,51 +1273,30 @@ function findFood(queryRaw){
   return null;
 }
 
-function calcularSubstituicao(){
-  var slotId = document.getElementById("slotSelect").value;
-  var foodQuery = document.getElementById("foodInput").value;
+function computeSubstitution(slotId, foodQueryRaw){
   var slot = SLOTS.filter(function(s){ return s.id === slotId; })[0];
-  var errorEl = document.getElementById("calcError");
-  var resultEl = document.getElementById("calcResult");
+  if(!slot) return { error:"slot_nao_encontrado" };
 
-  var found = findFood(foodQuery);
-  if(!found){
-    errorEl.classList.add("show");
-    resultEl.classList.remove("show");
-    return;
-  }
-  errorEl.classList.remove("show");
+  var found = findFood(foodQueryRaw);
+  if(!found) return { error:"alimento_nao_encontrado" };
 
   var macroPer100 = slot.type === "p" ? found.data.p : found.data.c;
   if(!macroPer100 || macroPer100 <= 0){
-    document.getElementById("calcHeadline").innerHTML =
-      "Esse alimento tem pouquíssim" + (slot.type === "p" ? "a proteína" : "o carboidrato") + " — não é um bom substituto direto pra esse item. Melhor usar como acompanhamento extra, não como troca 1-para-1.";
-    document.getElementById("calcMacroLine").textContent = "";
-    document.getElementById("calcCompareLine").textContent = "";
-    document.getElementById("calcNote").textContent = "";
-    resultEl.classList.add("show");
-    return;
+    return { error:"macro_insuficiente", slot:slot, foodLabel: found.key.charAt(0).toUpperCase()+found.key.slice(1) };
   }
 
   var grams = (slot.target / macroPer100) * 100;
   var gramsRounded = Math.round(grams / 5) * 5;
-
   var factor = gramsRounded / 100;
   var kcal = Math.round(found.data.kcal * factor);
   var p = (found.data.p * factor).toFixed(1);
   var c = (found.data.c * factor).toFixed(1);
   var f = (found.data.f * factor).toFixed(1);
-
   var foodLabel = found.key.charAt(0).toUpperCase() + found.key.slice(1);
   var macroLabel = slot.type === "p" ? "proteína" : "carboidrato";
-
-  document.getElementById("calcHeadline").innerHTML =
-    "Você pode comer <b>" + gramsRounded + " g</b> de " + foodLabel.toLowerCase() + " nesse item.";
-  document.getElementById("calcMacroLine").textContent =
-    "≈ " + kcal + " kcal · P " + p + "g · C " + c + "g · G " + f + "g  (mantendo " + slot.target.toFixed(1) + "g de " + macroLabel + ", igual ao item original)";
-
   var kcalDiff = kcal - slot.kcalBase;
-  var compareText = "";
+
+  var compareText;
   if(Math.abs(kcalDiff) < 25){
     compareText = "Calorias bem próximas do item original — troca tranquila.";
   } else if(kcalDiff > 0){
@@ -1189,11 +1304,197 @@ function calcularSubstituicao(){
   } else {
     compareText = "Isso é " + Math.abs(kcalDiff) + " kcal a menos que o item original — dá pra completar com algo pequeno (fruta, castanhas) se sentir fome.";
   }
-  document.getElementById("calcCompareLine").textContent = compareText;
+
+  return {
+    ok:true, slot:slot, gramsRounded:gramsRounded, kcal:kcal, p:p, c:c, f:f,
+    foodLabel:foodLabel, macroLabel:macroLabel, compareText:compareText
+  };
+}
+
+function calcularSubstituicao(){
+  var slotId = document.getElementById("slotSelect").value;
+  var foodQuery = document.getElementById("foodInput").value;
+  var errorEl = document.getElementById("calcError");
+  var resultEl = document.getElementById("calcResult");
+
+  var r = computeSubstitution(slotId, foodQuery);
+
+  if(r.error === "alimento_nao_encontrado" || r.error === "slot_nao_encontrado"){
+    errorEl.classList.add("show");
+    resultEl.classList.remove("show");
+    return;
+  }
+  errorEl.classList.remove("show");
+
+  if(r.error === "macro_insuficiente"){
+    document.getElementById("calcHeadline").innerHTML =
+      "Esse alimento tem pouquíssim" + (r.slot.type === "p" ? "a proteína" : "o carboidrato") + " — não é um bom substituto direto pra esse item. Melhor usar como acompanhamento extra, não como troca 1-para-1.";
+    document.getElementById("calcMacroLine").textContent = "";
+    document.getElementById("calcCompareLine").textContent = "";
+    document.getElementById("calcNote").textContent = "";
+    resultEl.classList.add("show");
+    return;
+  }
+
+  document.getElementById("calcHeadline").innerHTML =
+    "Você pode comer <b>" + r.gramsRounded + " g</b> de " + r.foodLabel.toLowerCase() + " nesse item.";
+  document.getElementById("calcMacroLine").textContent =
+    "≈ " + r.kcal + " kcal · P " + r.p + "g · C " + r.c + "g · G " + r.f + "g  (mantendo " + r.slot.target.toFixed(1) + "g de " + r.macroLabel + ", igual ao item original)";
+  document.getElementById("calcCompareLine").textContent = r.compareText;
   document.getElementById("calcNote").textContent =
     "Valores aproximados de tabelas nutricionais padrão. Preparo (empanado, frito, com molho) muda bastante o resultado — isso aqui vale para preparo simples (grelhado/cozido/no vapor).";
 
   resultEl.classList.add("show");
+}
+
+/* ============ IA LOCAL (WebLLM) ============ */
+var aiEngine = null;
+var aiModule = null;
+var AI_MODEL_PRIMARY = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+var AI_MODEL_FALLBACK = "SmolLM2-360M-Instruct-q4f16_1-MLC";
+
+function slotListForPrompt(){
+  return SLOTS.map(function(s){ return '- "' + s.id + '": ' + s.label; }).join("\n");
+}
+
+async function loadAI(){
+  if(!navigator.gpu){
+    document.getElementById("aiUnsupported").style.display = "block";
+    document.getElementById("aiLoadWrap").style.display = "none";
+    return;
+  }
+  var loadBtn = document.getElementById("aiLoadBtn");
+  var badge = document.getElementById("aiBadge");
+  var progWrap = document.getElementById("aiProgressWrap");
+  var progBar = document.getElementById("aiProgressBar");
+  var progText = document.getElementById("aiProgressText");
+
+  loadBtn.disabled = true;
+  loadBtn.textContent = "Carregando...";
+  badge.textContent = "carregando modelo";
+  progWrap.classList.add("show");
+
+  function onProgress(report){
+    var pct = Math.round((report.progress || 0) * 100);
+    progBar.style.width = pct + "%";
+    progText.textContent = (report.text || "Baixando...") + (pct ? " (" + pct + "%)" : "");
+  }
+
+  try{
+    aiModule = await import("https://esm.run/@mlc-ai/web-llm");
+    aiEngine = await aiModule.CreateMLCEngine(AI_MODEL_PRIMARY, { initProgressCallback:onProgress });
+    badge.textContent = "IA pronta (Llama 3.2 1B)";
+  } catch(err1){
+    console.error("Falha ao carregar modelo principal, tentando modelo menor:", err1);
+    try{
+      progText.textContent = "Modelo principal falhou, tentando versão menor...";
+      aiEngine = await aiModule.CreateMLCEngine(AI_MODEL_FALLBACK, { initProgressCallback:onProgress });
+      badge.textContent = "IA pronta (SmolLM2 360M)";
+    } catch(err2){
+      console.error("Falha ao carregar IA local:", err2);
+      badge.textContent = "falha ao carregar";
+      progText.textContent = "Não foi possível carregar a IA local neste dispositivo. Use a calculadora manual acima.";
+      loadBtn.disabled = false;
+      loadBtn.textContent = "Tentar novamente";
+      return;
+    }
+  }
+
+  progWrap.classList.remove("show");
+  document.getElementById("aiLoadWrap").style.display = "none";
+  document.getElementById("aiChatRow").style.display = "flex";
+}
+
+async function askAI(){
+  if(!aiEngine) return;
+  var input = document.getElementById("aiInput");
+  var question = input.value.trim();
+  if(!question) return;
+
+  var askBtn = document.getElementById("aiAskBtn");
+  var statusEl = document.getElementById("aiStatus");
+  var errorEl = document.getElementById("aiError");
+  var resultEl = document.getElementById("aiResult");
+
+  errorEl.classList.remove("show");
+  resultEl.classList.remove("show");
+  askBtn.disabled = true;
+  statusEl.textContent = "Pensando...";
+
+  var systemPrompt =
+    "Você extrai informação estruturada de perguntas sobre substituição de alimentos numa dieta. " +
+    "Responda APENAS com um JSON válido, sem texto antes ou depois, no formato exato: " +
+    '{"slot_id": "...", "food": "..."}. ' +
+    "O campo slot_id deve ser exatamente um destes IDs (escolha o mais próximo do que a pessoa mencionou — refeição e se é a parte de proteína ou carboidrato):\n" +
+    slotListForPrompt() + "\n" +
+    'O campo food deve ser o nome do alimento mencionado, em português, minúsculo, sem acento se possível, só o nome (ex: "arroz japones", "salmao", "batata inglesa").';
+
+  try{
+    var completion = await aiEngine.chat.completions.create({
+      messages: [
+        { role:"system", content:systemPrompt },
+        { role:"user", content:question }
+      ],
+      temperature:0,
+      response_format:{ type:"json_object" }
+    });
+
+    var raw = completion.choices[0].message.content;
+    var parsed;
+    try{
+      parsed = JSON.parse(raw);
+    } catch(e){
+      var match = raw.match(/\{[\s\S]*\}/);
+      parsed = match ? JSON.parse(match[0]) : null;
+    }
+
+    if(!parsed || !parsed.slot_id || !parsed.food){
+      throw new Error("JSON incompleto retornado pela IA");
+    }
+
+    var r = computeSubstitution(parsed.slot_id, parsed.food);
+    var slotLabelFound = SLOTS.filter(function(s){ return s.id === parsed.slot_id; })[0];
+
+    document.getElementById("aiUnderstood").textContent =
+      "Entendi: " + (slotLabelFound ? slotLabelFound.label : parsed.slot_id) + " · alimento: " + parsed.food;
+
+    if(r.error === "alimento_nao_encontrado" || r.error === "slot_nao_encontrado"){
+      errorEl.textContent = "Não achei \"" + parsed.food + "\" na base de alimentos, ou não entendi qual refeição. Tenta reformular ou usa a calculadora manual acima com esse alimento.";
+      errorEl.classList.add("show");
+      statusEl.textContent = "";
+      askBtn.disabled = false;
+      return;
+    }
+
+    if(r.error === "macro_insuficiente"){
+      document.getElementById("aiHeadline").innerHTML =
+        "Esse alimento tem pouquíssim" + (r.slot.type === "p" ? "a proteína" : "o carboidrato") + " — não é um bom substituto direto pra esse item.";
+      document.getElementById("aiMacroLine").textContent = "";
+      document.getElementById("aiCompareLine").textContent = "";
+      document.getElementById("aiNote").textContent = "";
+      resultEl.classList.add("show");
+      statusEl.textContent = "";
+      askBtn.disabled = false;
+      return;
+    }
+
+    document.getElementById("aiHeadline").innerHTML =
+      "Você pode comer <b>" + r.gramsRounded + " g</b> de " + r.foodLabel.toLowerCase() + " nesse item.";
+    document.getElementById("aiMacroLine").textContent =
+      "≈ " + r.kcal + " kcal · P " + r.p + "g · C " + r.c + "g · G " + r.f + "g  (mantendo " + r.slot.target.toFixed(1) + "g de " + r.macroLabel + ")";
+    document.getElementById("aiCompareLine").textContent = r.compareText;
+    document.getElementById("aiNote").textContent =
+      "A IA local só interpretou sua pergunta — o cálculo em si foi feito pela mesma lógica exata da calculadora manual, não pela IA.";
+    resultEl.classList.add("show");
+    statusEl.textContent = "";
+  } catch(err){
+    console.error("Erro ao consultar IA local:", err);
+    errorEl.textContent = "A IA não conseguiu interpretar essa pergunta. Tenta reformular (ex: \"quanto de salmão no jantar?\") ou usa a calculadora manual acima.";
+    errorEl.classList.add("show");
+    statusEl.textContent = "";
+  }
+
+  askBtn.disabled = false;
 }
 
 /* ============ INIT ============ */
@@ -1225,6 +1526,8 @@ window.toggleStock = toggleStock;
 window.limparSelecao = limparSelecao;
 window.copyShoppingList = copyShoppingList;
 window.calcularSubstituicao = calcularSubstituicao;
+window.loadAI = loadAI;
+window.askAI = askAI;
 </script>
 
 </body>
