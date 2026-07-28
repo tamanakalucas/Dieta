@@ -514,29 +514,6 @@
     border-radius:2px;
     margin-bottom:14px;
   }
-  .ai-progress-wrap{
-    display:none;
-    margin:14px 0;
-  }
-  .ai-progress-wrap.show{display:block;}
-  .ai-progress-track{
-    width:100%;
-    height:10px;
-    background:var(--sub-bg);
-    border:1.5px solid var(--ink);
-  }
-  .ai-progress-bar{
-    height:100%;
-    width:0%;
-    background:var(--olive);
-    transition:width .2s;
-  }
-  .ai-progress-text{
-    font-family:'DM Mono',monospace;
-    font-size:11.5px;
-    color:var(--muted);
-    margin-top:6px;
-  }
   .ai-chat-row{
     display:flex;
     gap:10px;
@@ -679,7 +656,7 @@
     <a href="#ceia">Ceia</a>
     <a href="#extras">Extras</a>
     <a href="#calc">Calculadora</a>
-    <a href="#ai">IA local</a>
+    <a href="#ai">IA (Groq)</a>
     <a href="#shopping">Lista de compras</a>
     <a href="#total">Total do dia</a>
   </nav>
@@ -720,29 +697,25 @@
     </div>
   </section>
 
-  <!-- IA LOCAL (WEBLLM) -->
+  <!-- IA VIA GROQ (modelos open-source, API gratuita) -->
   <section class="ai" id="ai">
     <div class="ai-head">
-      <h2>Pergunte em português livre (IA local)</h2>
+      <h2>Pergunte em português livre (IA — Groq)</h2>
     </div>
-    <p class="ai-sub">Um modelo aberto (Llama 3.2, da Meta) roda direto no seu navegador — nada sai do seu celular/computador, sem chave, sem servidor. Na primeira vez baixa ~1 GB (melhor em Wi-Fi); depois fica salvo em cache e carrega rápido. A IA só interpreta sua pergunta — quem calcula os gramas é a mesma lógica exata da calculadora acima.</p>
+    <p class="ai-sub">Usa a API gratuita da Groq, que roda modelos abertos (Llama 3.3, da Meta). A IA só interpreta sua pergunta — quem calcula os gramas é a mesma lógica exata da calculadora manual acima. A chave da API não está em lugar nenhum desta página — ela é lida direto de um documento no Firestore, configurado só pelo console do Firebase.</p>
     <div class="ai-box">
-      <span class="ai-badge" id="aiBadge">não carregado</span>
-      <div id="aiUnsupported" style="display:none;font-size:14px;color:#8a3324;">
-        Seu navegador não suporta WebGPU (necessário pra IA local). No iPhone, isso pede iOS 26 ou mais recente com Safari atualizado. Use a calculadora manual acima normalmente — ela não depende disso.
+      <span class="ai-badge" id="aiBadge">verificando chave no banco...</span>
+
+      <div id="aiKeyMissing" style="display:none;font-size:14px;color:#8a3324;">
+        Nenhuma chave configurada no banco ainda. Veja as instruções que te passei pra criar o documento <code>dieta/config</code> com o campo <code>groqApiKey</code> direto no console do Firebase.
       </div>
-      <div id="aiLoadWrap">
-        <button class="calc-btn" id="aiLoadBtn" onclick="loadAI()">Carregar IA local (~1 GB na 1ª vez)</button>
-      </div>
-      <div class="ai-progress-wrap" id="aiProgressWrap">
-        <div class="ai-progress-track"><div class="ai-progress-bar" id="aiProgressBar"></div></div>
-        <p class="ai-progress-text" id="aiProgressText">Preparando...</p>
-      </div>
+
       <div class="ai-chat-row" id="aiChatRow" style="display:none;">
         <input type="text" id="aiInput" placeholder="ex: vou comer arroz japonês no almoço, quanto posso comer?" onkeydown="if(event.key==='Enter'){askAI();}">
         <button onclick="askAI()" id="aiAskBtn">Perguntar</button>
       </div>
       <p class="ai-status" id="aiStatus"></p>
+
       <div class="calc-result" id="aiResult">
         <p class="headline" id="aiHeadline"></p>
         <p class="calc-macro-line" id="aiMacroLine"></p>
@@ -809,11 +782,13 @@ var firebaseConfig = {
 var FIREBASE_ENABLED = firebaseConfig.apiKey !== "SUA_API_KEY_AQUI";
 var db = null;
 var stockDocRef = null;
+var configDocRef = null;
 
 if(FIREBASE_ENABLED){
   var fbApp = initializeApp(firebaseConfig);
   db = getFirestore(fbApp);
   stockDocRef = doc(db, "dieta", "estoqueSemanal");
+  configDocRef = doc(db, "dieta", "config");
 }
 
 /* ============ DADOS DA DIETA ============ */
@@ -1347,66 +1322,46 @@ function calcularSubstituicao(){
   resultEl.classList.add("show");
 }
 
-/* ============ IA LOCAL (WebLLM) ============ */
-var aiEngine = null;
-var aiModule = null;
-var AI_MODEL_PRIMARY = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
-var AI_MODEL_FALLBACK = "SmolLM2-360M-Instruct-q4f16_1-MLC";
+/* ============ IA VIA GROQ ============ */
+var GROQ_MODEL = "llama-3.3-70b-versatile";
+var groqApiKeyCache = ""; // lido direto do Firestore (documento dieta/config, campo groqApiKey)
 
 function slotListForPrompt(){
   return SLOTS.map(function(s){ return '- "' + s.id + '": ' + s.label; }).join("\n");
 }
 
-async function loadAI(){
-  if(!navigator.gpu){
-    document.getElementById("aiUnsupported").style.display = "block";
-    document.getElementById("aiLoadWrap").style.display = "none";
+function getStoredGroqKey(){
+  return groqApiKeyCache;
+}
+
+function refreshGroqUI(){
+  var badge = document.getElementById("aiBadge");
+  var missingEl = document.getElementById("aiKeyMissing");
+  var chatRow = document.getElementById("aiChatRow");
+
+  if(!FIREBASE_ENABLED){
+    badge.textContent = "banco não configurado";
+    missingEl.style.display = "block";
+    missingEl.textContent = "A IA depende do Firestore estar configurado (mesmo banco da lista de compras) para ler a chave da API.";
+    chatRow.style.display = "none";
     return;
   }
-  var loadBtn = document.getElementById("aiLoadBtn");
-  var badge = document.getElementById("aiBadge");
-  var progWrap = document.getElementById("aiProgressWrap");
-  var progBar = document.getElementById("aiProgressBar");
-  var progText = document.getElementById("aiProgressText");
 
-  loadBtn.disabled = true;
-  loadBtn.textContent = "Carregando...";
-  badge.textContent = "carregando modelo";
-  progWrap.classList.add("show");
-
-  function onProgress(report){
-    var pct = Math.round((report.progress || 0) * 100);
-    progBar.style.width = pct + "%";
-    progText.textContent = (report.text || "Baixando...") + (pct ? " (" + pct + "%)" : "");
+  if(groqApiKeyCache){
+    badge.textContent = "chave carregada do banco";
+    missingEl.style.display = "none";
+    chatRow.style.display = "flex";
+  } else {
+    badge.textContent = "chave não configurada no banco";
+    missingEl.style.display = "block";
+    chatRow.style.display = "none";
   }
-
-  try{
-    aiModule = await import("https://esm.run/@mlc-ai/web-llm");
-    aiEngine = await aiModule.CreateMLCEngine(AI_MODEL_PRIMARY, { initProgressCallback:onProgress });
-    badge.textContent = "IA pronta (Llama 3.2 1B)";
-  } catch(err1){
-    console.error("Falha ao carregar modelo principal, tentando modelo menor:", err1);
-    try{
-      progText.textContent = "Modelo principal falhou, tentando versão menor...";
-      aiEngine = await aiModule.CreateMLCEngine(AI_MODEL_FALLBACK, { initProgressCallback:onProgress });
-      badge.textContent = "IA pronta (SmolLM2 360M)";
-    } catch(err2){
-      console.error("Falha ao carregar IA local:", err2);
-      badge.textContent = "falha ao carregar";
-      progText.textContent = "Não foi possível carregar a IA local neste dispositivo. Use a calculadora manual acima.";
-      loadBtn.disabled = false;
-      loadBtn.textContent = "Tentar novamente";
-      return;
-    }
-  }
-
-  progWrap.classList.remove("show");
-  document.getElementById("aiLoadWrap").style.display = "none";
-  document.getElementById("aiChatRow").style.display = "flex";
 }
 
 async function askAI(){
-  if(!aiEngine) return;
+  var key = getStoredGroqKey();
+  if(!key) return;
+
   var input = document.getElementById("aiInput");
   var question = input.value.trim();
   if(!question) return;
@@ -1430,16 +1385,35 @@ async function askAI(){
     'O campo food deve ser o nome do alimento mencionado, em português, minúsculo, sem acento se possível, só o nome (ex: "arroz japones", "salmao", "batata inglesa").';
 
   try{
-    var completion = await aiEngine.chat.completions.create({
-      messages: [
-        { role:"system", content:systemPrompt },
-        { role:"user", content:question }
-      ],
-      temperature:0,
-      response_format:{ type:"json_object" }
+    var response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + key
+      },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: question }
+        ]
+      })
     });
 
-    var raw = completion.choices[0].message.content;
+    if(response.status === 401){
+      throw { friendly: "Chave inválida ou expirada. Clique em \"trocar/apagar chave salva\" e cole uma chave nova de console.groq.com/keys." };
+    }
+    if(response.status === 429){
+      throw { friendly: "Limite gratuito da Groq atingido por agora (reseta rapidinho — é por minuto/dia). Tenta de novo daqui a pouco, ou usa a calculadora manual." };
+    }
+    if(!response.ok){
+      throw { friendly: "A Groq respondeu com erro (" + response.status + "). Tenta novamente em instantes." };
+    }
+
+    var data = await response.json();
+    var raw = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
     var parsed;
     try{
       parsed = JSON.parse(raw);
@@ -1449,7 +1423,7 @@ async function askAI(){
     }
 
     if(!parsed || !parsed.slot_id || !parsed.food){
-      throw new Error("JSON incompleto retornado pela IA");
+      throw { friendly: "A IA não devolveu uma resposta que eu consegui interpretar. Tenta reformular a pergunta." };
     }
 
     var r = computeSubstitution(parsed.slot_id, parsed.food);
@@ -1484,12 +1458,12 @@ async function askAI(){
       "≈ " + r.kcal + " kcal · P " + r.p + "g · C " + r.c + "g · G " + r.f + "g  (mantendo " + r.slot.target.toFixed(1) + "g de " + r.macroLabel + ")";
     document.getElementById("aiCompareLine").textContent = r.compareText;
     document.getElementById("aiNote").textContent =
-      "A IA local só interpretou sua pergunta — o cálculo em si foi feito pela mesma lógica exata da calculadora manual, não pela IA.";
+      "A IA (Groq/Llama 3.3) só interpretou sua pergunta — o cálculo em si foi feito pela mesma lógica exata da calculadora manual, não pela IA.";
     resultEl.classList.add("show");
     statusEl.textContent = "";
   } catch(err){
-    console.error("Erro ao consultar IA local:", err);
-    errorEl.textContent = "A IA não conseguiu interpretar essa pergunta. Tenta reformular (ex: \"quanto de salmão no jantar?\") ou usa a calculadora manual acima.";
+    console.error("Erro ao consultar Groq:", err);
+    errorEl.textContent = (err && err.friendly) ? err.friendly : "Não consegui falar com a Groq agora (verifique sua internet). Tenta de novo ou usa a calculadora manual.";
     errorEl.classList.add("show");
     statusEl.textContent = "";
   }
@@ -1502,6 +1476,7 @@ window.addEventListener("DOMContentLoaded", function(){
   renderMeals();
   renderExtras();
   initCalculator();
+  refreshGroqUI();
 
   var syncEl = document.getElementById("syncStatus");
   if(FIREBASE_ENABLED){
@@ -1514,9 +1489,18 @@ window.addEventListener("DOMContentLoaded", function(){
       console.error("Erro de conexão com Firestore:", err);
       syncEl.textContent = "\u26a0\ufe0f erro de conexão — verifique o firebaseConfig e as regras do Firestore no console";
     });
+    onSnapshot(configDocRef, function(snap){
+      var data = snap.exists() ? snap.data() : { groqApiKey: "" };
+      groqApiKeyCache = data.groqApiKey || "";
+      refreshGroqUI();
+    }, function(err){
+      console.error("Erro ao ler config (chave Groq) do Firestore:", err);
+      document.getElementById("aiBadge").textContent = "erro ao ler o banco";
+    });
   } else {
     syncEl.textContent = "\ud83d\udcbe modo local — cole seu firebaseConfig no código da página para salvar entre sessões e dispositivos";
     updateShoppingList();
+    refreshGroqUI();
   }
 });
 
@@ -1526,7 +1510,6 @@ window.toggleStock = toggleStock;
 window.limparSelecao = limparSelecao;
 window.copyShoppingList = copyShoppingList;
 window.calcularSubstituicao = calcularSubstituicao;
-window.loadAI = loadAI;
 window.askAI = askAI;
 </script>
 
